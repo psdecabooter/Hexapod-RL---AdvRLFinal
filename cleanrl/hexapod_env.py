@@ -157,6 +157,16 @@ class HexapodEnv(gym.Env):
         # Load ground plane
         self.plane_id = p.loadURDF("plane.urdf", physicsClientId=self.physics_client)
         
+        # Increase ground friction for better traction
+        p.changeDynamics(
+            self.plane_id,
+            -1,  # -1 means the base link
+            lateralFriction=2.0,  # Default is ~1.0, higher = more friction
+            spinningFriction=0.1,
+            rollingFriction=0.01,
+            physicsClientId=self.physics_client
+        )
+        
         # Load hexapod robot
         # Physical dimensions: hip->knee=37mm, knee->ankle=63.54mm, ankle->tip=200mm
         # Total leg length = 300.54mm ≈ 0.30m
@@ -532,15 +542,15 @@ class HexapodEnv(gym.Env):
                 fov=70, aspect=16/9, nearVal=0.1, farVal=100.0  # Wider FOV, 16:9 aspect
             )
             (_, _, px, _, _) = p.getCameraImage(
-                width=1280,  # Lower resolution for faster startup/rendering
-                height=720,
+                width=720,  # Lower resolution for faster startup/rendering
+                height=640,
                 viewMatrix=view_matrix,
                 projectionMatrix=proj_matrix,
                 renderer=p.ER_TINY_RENDERER,  # Software renderer - more stable in WSL
                 physicsClientId=self.physics_client
             )
             rgb_array = np.array(px, dtype=np.uint8)
-            rgb_array = np.reshape(rgb_array, (720, 1280, 4))
+            rgb_array = np.reshape(rgb_array, (640, 720, 4))
             rgb_array = rgb_array[:, :, :3]
             return rgb_array
         elif self.render_mode == "human":
