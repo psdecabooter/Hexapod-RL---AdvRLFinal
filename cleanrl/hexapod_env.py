@@ -2,15 +2,6 @@
 PyBullet-based Gymnasium environment for hexapod robot locomotion.
 Compatible with all CleanRL continuous action algorithms.
 
-Robot Dimensions (from physical measurements - more accurate than URDF frames):
-    - Hip to knee: 37.0 mm (URDF frames show 28mm, but that's frame offset not link length)
-    - Knee to ankle: 63.54 mm (URDF frames show 87mm)
-    - Ankle to tip: 200.0 mm (actual physical link length)
-    - Total leg length: ~300.54 mm (0.30 m)
-
-Note: URDF joint frames don't directly correspond to physical link lengths due to 
-      servo mounting offsets and coordinate frame placements.
-
 Usage with CleanRL:
     cd cleanrl
     python cleanrl/ppo_continuous_action.py --env-id Hexapod-v0 --total-timesteps 2000000
@@ -30,15 +21,11 @@ from gymnasium import spaces
 
 
 class HexapodEnv(gym.Env):
-    """Custom Gymnasium environment for hexapod robot using PyBullet physics.
-    
-    WARNING: This environment should ONLY be used with num_envs=1 due to PyBullet limitations.
-    Using multiple parallel environments will cause memory leaks and crashes.
-    """
+    """Custom Gymnasium environment for hexapod robot using PyBullet physics."""
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
     
-    def __init__(self, render_mode=None, max_steps=3000, control_frequency=None):
+    def __init__(self, render_mode=None, max_steps=1000, control_frequency=None):
         super().__init__()
         
         self.render_mode = render_mode
@@ -64,10 +51,10 @@ class HexapodEnv(gym.Env):
         else:
             self.physics_client = p.connect(p.DIRECT)
         
-        # Set up PyBullet (using physicsClientId to ensure correct instance)
-        p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=self.physics_client)
-        p.setGravity(0, 0, -9.81, physicsClientId=self.physics_client)
-        p.setTimeStep(self.simulation_dt, physicsClientId=self.physics_client)
+        # Set up PyBullet
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setGravity(0, 0, -9.81)
+        p.setTimeStep(self.simulation_dt)
         
         # Load URDF path (relative to this file)
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -100,12 +87,10 @@ class HexapodEnv(gym.Env):
         # - base angular velocity (3)
         # - joint positions (18)
         # - joint velocities (18)
-        # - goal vector (2) - direction and distance to goal
-        # - distance to goal (1) - scalar distance
-        # - velocity alignment to goal (1) - dot product of velocity and goal direction
-        # - base height (1) - z position for stability awareness
-        # Total: 54 dimensions
-        obs_dim = 3 + 4 + 3 + 3 + self.num_joints + self.num_joints + 2 + 1 + 1 + 1
+        # - goal vector (2: X, Y to goal)
+        # - distance to goal (1)
+        # Total: 52 dimensions
+        obs_dim = 3 + 4 + 3 + 3 + self.num_joints + self.num_joints + 2 + 1
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -113,20 +98,19 @@ class HexapodEnv(gym.Env):
             dtype=np.float32
         )
         
-        # Store previous distance to goal for reward calculation
-        self.prev_distance_to_goal = None
-        
-        # Reward components for logging
         self.reward_components = {}
         
-        # Goal position (randomized each episode)
+        # Store previous position for reward calculation
+        self.prev_base_pos = None
+        
+        # Goal position and visualization
         self.goal_position = None
         self.goal_threshold = 0.5  # Distance to consider "reached goal"
-        self.goal_visual_id = None  # Visual marker for the goal
+        self.goal_visual_id = None
+        self.goal_distance = 1.5  # Fixed distance for goal
         
-        # Camera tracking with dead zone to avoid shaky video
-        self.camera_target = None  # Current camera target position
-        self.camera_deadzone_radius = 4.0  # Only move camera if robot moves >4m from center
+        # Camera tracking
+        self.camera_target = None
         
         # Robot and plane IDs
         self.robot_id = None
@@ -146,7 +130,7 @@ class HexapodEnv(gym.Env):
             try:
                 p.removeBody(self.goal_visual_id, physicsClientId=self.physics_client)
             except:
-                pass  # Body might already be removed
+                pass
         self.goal_visual_id = None
         
         # Reset PyBullet simulation
@@ -157,21 +141,9 @@ class HexapodEnv(gym.Env):
         # Load ground plane
         self.plane_id = p.loadURDF("plane.urdf", physicsClientId=self.physics_client)
         
-        # Increase ground friction for better traction
-        p.changeDynamics(
-            self.plane_id,
-            -1,  # -1 means the base link
-            lateralFriction=2.0,  # Default is ~1.0, higher = more friction
-            spinningFriction=0.1,
-            rollingFriction=0.01,
-            physicsClientId=self.physics_client
-        )
-        
         # Load hexapod robot
-        # Physical dimensions: hip->knee=37mm, knee->ankle=63.54mm, ankle->tip=200mm
-        # Total leg length = 300.54mm ≈ 0.30m
-        # Start at ~0.25m to allow settling without legs fully extended
-        start_pos = [0, 0, 0.25]  # Start above ground with room to settle
+        # Fix the URDF path issue by replacing package:// with absolute path
+        start_pos = [0, 0, 0.15]  # Start slightly above ground
         start_orientation = p.getQuaternionFromEuler([0, 0, 0])
         
         try:
@@ -216,11 +188,11 @@ class HexapodEnv(gym.Env):
         # Verify we found all expected joints
         if len(self.joint_indices) != self.num_joints:
             found_joints = [x[3] for x in joint_data]
-            raise RuntimeError(
-                f"Expected {self.num_joints} joints ({self.joint_names}) "
-                f"but found {len(self.joint_indices)} joints in URDF: {found_joints}"
-            )
-                
+            print(f"Warning: Expected {self.num_joints} joints but found {len(self.joint_indices)}")
+            print(f"Found joints: {found_joints}")
+            # Update num_joints to match what we actually found
+            self.num_joints = len(self.joint_indices)
+        
         # Initialize joints to a neutral standing position
         for idx in self.joint_indices:
             p.resetJointState(self.robot_id, idx, 0.0, physicsClientId=self.physics_client)
@@ -243,45 +215,38 @@ class HexapodEnv(gym.Env):
         # Reset state variables
         self.current_step = 0
         base_pos, _ = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.physics_client)
+        self.prev_base_pos = np.array(base_pos)
         
-        # Randomized goal: 2-4 meters away in forward hemisphere (easier task)
-        goal_distance = self.np_random.uniform(2.0, 4.0)  # Random distance between 2-4m
-        goal_angle = self.np_random.uniform(-np.pi/2, np.pi/2)  # Forward hemisphere ±90 degrees
-        
+        # Set goal position: 1.5 meters forward
         self.goal_position = np.array([
-            base_pos[0] + goal_distance * np.cos(goal_angle),  # X offset
-            base_pos[1] + goal_distance * np.sin(goal_angle)   # Y offset
+            base_pos[0] + self.goal_distance,
+            base_pos[1]
         ])
         
-        # Initialize camera target at midpoint between robot and goal
-        mid_x = (base_pos[0] + self.goal_position[0]) / 2
-        mid_y = (base_pos[1] + self.goal_position[1]) / 2
-        self.camera_target = np.array([mid_x, mid_y, 0.0])
-        
-        # Initialize previous distance to goal
-        to_goal = self.goal_position - np.array([base_pos[0], base_pos[1]])
-        self.prev_distance_to_goal = np.linalg.norm(to_goal)
-        
         # Create visual marker for goal (flat circle on ground)
-        goal_height = 0.01  # Very thin disk, essentially flat on the ground
-        goal_radius = self.goal_threshold  # Same as threshold for clarity
+        goal_height = 0.01
+        goal_radius = self.goal_threshold
         
-        # Create a flat cylinder (disk) for the goal marker
         goal_vis_shape = p.createVisualShape(
-            p.GEOM_CYLINDER, 
-            radius=goal_radius, 
+            p.GEOM_CYLINDER,
+            radius=goal_radius,
             length=goal_height,
-            rgbaColor=[0, 1, 0, 0.8],  # Bright green, mostly opaque since it's on the ground
+            rgbaColor=[0, 1, 0, 0.8],
             physicsClientId=self.physics_client
         )
         
         self.goal_visual_id = p.createMultiBody(
             baseMass=0,
-            baseCollisionShapeIndex=-1,  # No collision
+            baseCollisionShapeIndex=-1,
             baseVisualShapeIndex=goal_vis_shape,
             basePosition=[self.goal_position[0], self.goal_position[1], goal_height/2],
             physicsClientId=self.physics_client
         )
+        
+        # Initialize camera target at midpoint between robot and goal
+        mid_x = (base_pos[0] + self.goal_position[0]) / 2
+        mid_y = (base_pos[1] + self.goal_position[1]) / 2
+        self.camera_target = np.array([mid_x, mid_y, 0.0])
         
         observation = self._get_observation()
         info = {}
@@ -346,36 +311,17 @@ class HexapodEnv(gym.Env):
         goal_vector = self.goal_position - np.array([base_pos[0], base_pos[1]])
         distance_to_goal = np.linalg.norm(goal_vector)
         
-        # Calculate velocity alignment to goal
-        velocity_2d = np.array([base_lin_vel[0], base_lin_vel[1]])
-        speed = np.linalg.norm(velocity_2d)
-        
-        if distance_to_goal > 1e-6 and speed > 1e-6:
-            goal_direction = goal_vector / distance_to_goal
-            velocity_direction = velocity_2d / speed
-            velocity_alignment = np.dot(velocity_direction, goal_direction)
-        else:
-            velocity_alignment = 0.0
-        
         # Concatenate all observations
         observation = np.concatenate([
-            np.array(base_pos),           # 3 - absolute position
-            np.array(base_orn),           # 4 - orientation quaternion
-            np.array(base_lin_vel),       # 3 - linear velocity
-            np.array(base_ang_vel),       # 3 - angular velocity
-            np.array(joint_positions),    # 18 - joint angles
-            np.array(joint_velocities),   # 18 - joint velocities
-            goal_vector,                  # 2 - X,Y vector to goal
-            [distance_to_goal],           # 1 - scalar distance to goal
-            [velocity_alignment],         # 1 - how aligned velocity is with goal
-            [base_pos[2]]                 # 1 - height (for stability awareness)
+            np.array(base_pos),           # 3
+            np.array(base_orn),           # 4
+            np.array(base_lin_vel),       # 3
+            np.array(base_ang_vel),       # 3
+            np.array(joint_positions),    # 18
+            np.array(joint_velocities),   # 18
+            goal_vector,                  # 2
+            [distance_to_goal]            # 1
         ]).astype(np.float32)
-        
-        # Safety check: clip extreme values to prevent NaN/Inf propagation
-        observation = np.clip(observation, -1e6, 1e6)
-        
-        # Replace any NaN with 0
-        observation = np.nan_to_num(observation, nan=0.0, posinf=1e6, neginf=-1e6)
         
         return observation
     
@@ -384,27 +330,35 @@ class HexapodEnv(gym.Env):
         base_pos, base_orn = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.physics_client)
         base_lin_vel, base_ang_vel = p.getBaseVelocity(self.robot_id, physicsClientId=self.physics_client)
         
-        # Calculate vector to goal
-        to_goal = self.goal_position - np.array([base_pos[0], base_pos[1]])
-        distance_to_goal = np.linalg.norm(to_goal)
+        # Calculate displacement vector
+        displacement = np.array([
+            base_pos[0] - self.prev_base_pos[0],  # X (forward/backward)
+            base_pos[1] - self.prev_base_pos[1],  # Y (left/right)
+        ])
         
-        # Check if reached goal
-        if distance_to_goal < self.goal_threshold:
-            goal_reached_bonus = 2000.0  # Large bonus for reaching goal
+        # Calculate total distance moved (in 2D horizontal plane)
+        distance_moved = np.linalg.norm(displacement)
+        
+        # Goal direction is forward along X-axis
+        goal_direction = np.array([1.0, 0.0])
+        
+        # Calculate directional alignment for displacement
+        if distance_moved > 1e-6:  # Avoid division by zero
+            movement_direction = displacement / distance_moved
+            # Dot product gives cos(angle) between movement and goal
+            directional_alignment = np.dot(movement_direction, goal_direction)
         else:
-            goal_reached_bonus = 0.0
+            # No movement
+            directional_alignment = 0.0
         
-        # Progress reward: actual decrease in distance to goal
-        # Positive if moving closer, negative if moving away
-        progress_reward = (self.prev_distance_to_goal - distance_to_goal) * 300.0  # Increased to encourage progress
+        # Primary reward: distance scaled by directional alignment
+        # - Moving forward (0°): alignment = 1.0 → full reward
+        # - Moving sideways (90°): alignment = 0.0 → zero reward  
+        # - Moving backward (180°): alignment = -1.0 → negative reward
+        # Subtract constant to create pressure: must move >0.001m forward per step to break even
+        distance_reward = distance_moved * directional_alignment * 100.0 - 0.5
         
-        # Goal direction is toward the target
-        if distance_to_goal > 1e-6:
-            goal_direction = to_goal / distance_to_goal
-        else:
-            goal_direction = np.array([1.0, 0.0])  # Default if at goal
-        
-        # Velocity reward: moving fast toward goal
+        # Velocity reward: encourages moving fast in the goal direction
         velocity_2d = np.array([base_lin_vel[0], base_lin_vel[1]])
         speed = np.linalg.norm(velocity_2d)
         
@@ -414,37 +368,30 @@ class HexapodEnv(gym.Env):
         else:
             velocity_alignment = 0.0
         
-        velocity_reward = speed * velocity_alignment * 30.0  # Increased to strongly encourage movement toward goal
-
+        # Reward fast forward movement
+        velocity_reward = speed * velocity_alignment * 5.0
         
-        # Stability penalty (moderate to allow turning)
+        # Stability penalty (staying upright)
         euler = p.getEulerFromQuaternion(base_orn)
         roll, pitch, yaw = euler
-        stability_penalty = -2.0 * (roll**2 + pitch**2)  # Reduced from -5 to -2 to allow turning
+        stability_penalty = -1.0 * (abs(roll) + abs(pitch))
         
-        base_height = base_pos[2] 
-        desired_height = 0.20  # rough nominal
-        height_penalty = -1.0 * (desired_height - base_height)**2 if base_height < desired_height else 0  # Reduced from -2 to -1
-        
-        # # Energy efficiency penalty
-        # joint_states = p.getJointStates(self.robot_id, self.joint_indices, physicsClientId=self.physics_client)
-        # joint_velocities = np.array([state[1] for state in joint_states])
-        # energy_penalty = -0.0005 * np.sum(np.square(joint_velocities))
+        # Energy efficiency penalty (smooth, efficient movements)
+        joint_states = p.getJointStates(self.robot_id, self.joint_indices, physicsClientId=self.physics_client)
+        joint_velocities = np.array([state[1] for state in joint_states])
+        energy_penalty = -0.0005 * np.sum(np.square(joint_velocities))
         
         # Total reward
-        reward = (progress_reward + velocity_reward + goal_reached_bonus + stability_penalty + height_penalty)  # - energy_penalty
+        reward = distance_reward + velocity_reward + stability_penalty + energy_penalty
         
-        # Update previous distance to goal
-        self.prev_distance_to_goal = distance_to_goal
+        # Update previous position
+        self.prev_base_pos = np.array(base_pos)
         
-        # Store reward components for logging
         self.reward_components = {
-            "reward/progress": progress_reward,
+            "reward/distance": distance_reward,
             "reward/velocity": velocity_reward,
-            "reward/goal_bonus": goal_reached_bonus,
             "reward/stability_penalty": stability_penalty,
-            "reward/height_penalty": height_penalty,
-            # "reward/energy_penalty": energy_penalty,
+            "reward/energy_penalty": energy_penalty,
             "reward/total": reward,
         }
         
@@ -454,21 +401,11 @@ class HexapodEnv(gym.Env):
         """Check if episode should terminate."""
         base_pos, base_orn = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.physics_client)
         
-        # Safety check: terminate if robot goes too far (prevents numerical overflow)
-        if abs(base_pos[0]) > 1000 or abs(base_pos[1]) > 1000 or abs(base_pos[2]) > 100:
-            return True
-        
-        # Check if goal is reached
-        to_goal = self.goal_position - np.array([base_pos[0], base_pos[1]])
-        distance_to_goal = np.linalg.norm(to_goal)
-        if distance_to_goal < self.goal_threshold:
-            return True
-        
-        # Only terminate if robot flips way over (more lenient to allow learning)
+        # Only terminate if robot flips completely over
         # Don't terminate on low height - let the robot learn to avoid it naturally
         euler = p.getEulerFromQuaternion(base_orn)
         roll, pitch, yaw = euler
-        if abs(roll) > 2.0 or abs(pitch) > 2.0:  # ~115 degrees, more lenient than 90
+        if abs(roll) > 1.57 or abs(pitch) > 1.57:  # ~90 degrees
             return True
         
         return False
@@ -478,23 +415,17 @@ class HexapodEnv(gym.Env):
         base_pos, _ = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.physics_client)
         base_lin_vel, _ = p.getBaseVelocity(self.robot_id, physicsClientId=self.physics_client)
         
-        # Calculate distance to goal for logging
+        # Calculate distance to goal
         to_goal = self.goal_position - np.array([base_pos[0], base_pos[1]])
         distance_to_goal = np.linalg.norm(to_goal)
         
-        info = {
+        return {
             "x_position": base_pos[0],
             "y_position": base_pos[1],
             "z_position": base_pos[2],
             "x_velocity": base_lin_vel[0],
             "distance_to_goal": distance_to_goal,
         }
-        
-        # Add reward components if they exist
-        if hasattr(self, 'reward_components'):
-            info.update(self.reward_components)
-        
-        return info
     
     def render(self):
         """Render the environment."""
@@ -525,15 +456,15 @@ class HexapodEnv(gym.Env):
             
             # Camera distance based on how far apart robot and goal are
             # Need to see both, so distance scales with their separation
-            # At 5m separation, camera should be ~4m away to frame both
-            camera_distance = max(3.0, distance_to_goal * 0.8)
+            # Closer camera for better detail visibility
+            camera_distance = max(1.5, distance_to_goal * 0.75)
             
             # Camera points at the target position (midpoint between robot and goal)
             view_matrix = p.computeViewMatrixFromYawPitchRoll(
                 cameraTargetPosition=[self.camera_target[0], self.camera_target[1], base_pos[2]],
                 distance=camera_distance,
                 yaw=-90,  # Side view from the other side - robot moves right to left on screen
-                pitch=-30,  # Look down at 30 degrees
+                pitch=-20,  # Look down at 20 degrees
                 roll=0,
                 upAxisIndex=2,
                 physicsClientId=self.physics_client
@@ -582,5 +513,5 @@ class HexapodEnv(gym.Env):
 gym.register(
     id='Hexapod-v0',
     entry_point='hexapod_env:HexapodEnv',
-    max_episode_steps=3000,
+    max_episode_steps=1000,
 )
