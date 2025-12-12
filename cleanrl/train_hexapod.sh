@@ -3,7 +3,8 @@
 
 python cleanrl/ppo_continuous_action.py \
     --env-id Hexapod-v0 \
-    --total-timesteps 2000000 \
+    --total-timesteps 1500000 \
     --num-envs 8 \
     --save-model \
-    --capture-video
+    --seed 564 \
+    # --capture-video

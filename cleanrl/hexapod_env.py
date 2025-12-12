@@ -25,12 +25,18 @@ class HexapodEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
     
-    def __init__(self, render_mode=None, max_steps=1000, control_frequency=None):
+    def __init__(self, render_mode=None, max_steps=1000, control_frequency=None, reward_type="goal_directed"):
         super().__init__()
         
         self.render_mode = render_mode
         self.max_steps = max_steps
         self.current_step = 0
+        
+        self.reward_type = reward_type
+        if reward_type not in ["goal_directed", "forward_motion"]:
+            raise ValueError(f"reward_type must be 'goal_directed' or 'forward_motion', got {reward_type}")
+        
+        print(f"[HexapodEnv] Using reward type: {self.reward_type}")
         
         # PyBullet simulation timestep (standard)
         self.simulation_dt = 1.0 / 240.0
@@ -121,6 +127,10 @@ class HexapodEnv(gym.Env):
         self.joint_limits_lower = []
         self.joint_limits_upper = []
         
+        # Foot link tracking for contact detection
+        self.foot_link_indices = []  # Indices of leg_link_X (the actual feet)
+        self.non_foot_link_indices = []  # All other links (body, hip, knee, etc.)
+        
     def reset(self, seed=None, options=None):
         """Reset the environment to initial state."""
         super().reset(seed=seed)
@@ -193,6 +203,25 @@ class HexapodEnv(gym.Env):
             # Update num_joints to match what we actually found
             self.num_joints = len(self.joint_indices)
         
+        # Identify foot links (leg_link_1 through leg_link_6) and non-foot links
+        self.foot_link_indices = []
+        self.non_foot_link_indices = []
+        
+        num_links = p.getNumJoints(self.robot_id, physicsClientId=self.physics_client)
+        for i in range(-1, num_links):  # -1 is base_link
+            if i == -1:
+                link_name = "base_link"
+            else:
+                link_info = p.getJointInfo(self.robot_id, i, physicsClientId=self.physics_client)
+                link_name = link_info[12].decode('utf-8')  # child link name
+            
+            # Foot links are the final leg links (leg_link_1, leg_link_2, etc.)
+            if link_name.startswith('leg_link_'):
+                self.foot_link_indices.append(i)
+            else:
+                # Everything else (base, hip, knee, ankle servos, etc.) should NOT touch ground
+                self.non_foot_link_indices.append(i)
+        
         # Initialize joints to a neutral standing position
         for idx in self.joint_indices:
             p.resetJointState(self.robot_id, idx, 0.0, physicsClientId=self.physics_client)
@@ -224,7 +253,7 @@ class HexapodEnv(gym.Env):
         ])
         
         # Create visual marker for goal (flat circle on ground)
-        goal_height = 0.01
+        goal_height = 0.001
         goal_radius = self.goal_threshold
         
         goal_vis_shape = p.createVisualShape(
@@ -292,6 +321,10 @@ class HexapodEnv(gym.Env):
         terminated = self._is_terminated()
         truncated = self.current_step >= self.max_steps
         
+        # Add large penalty for early termination (flipping over)
+        if terminated and not truncated:
+            reward -= 200.0  # Large penalty for flipping/failing
+        
         info = self._get_info()
         
         return observation, reward, terminated, truncated, info
@@ -330,68 +363,133 @@ class HexapodEnv(gym.Env):
         base_pos, base_orn = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.physics_client)
         base_lin_vel, base_ang_vel = p.getBaseVelocity(self.robot_id, physicsClientId=self.physics_client)
         
-        # Calculate displacement vector
-        displacement = np.array([
-            base_pos[0] - self.prev_base_pos[0],  # X (forward/backward)
-            base_pos[1] - self.prev_base_pos[1],  # Y (left/right)
-        ])
-        
-        # Calculate total distance moved (in 2D horizontal plane)
+        # Common calculations
+        current_pos_2d = np.array([base_pos[0], base_pos[1]])
+        prev_pos_2d = self.prev_base_pos[:2]
+        displacement = current_pos_2d - prev_pos_2d
         distance_moved = np.linalg.norm(displacement)
         
-        # Goal direction is forward along X-axis
-        goal_direction = np.array([1.0, 0.0])
-        
-        # Calculate directional alignment for displacement
-        if distance_moved > 1e-6:  # Avoid division by zero
-            movement_direction = displacement / distance_moved
-            # Dot product gives cos(angle) between movement and goal
-            directional_alignment = np.dot(movement_direction, goal_direction)
-        else:
-            # No movement
-            directional_alignment = 0.0
-        
-        # Primary reward: distance scaled by directional alignment
-        # - Moving forward (0°): alignment = 1.0 → full reward
-        # - Moving sideways (90°): alignment = 0.0 → zero reward  
-        # - Moving backward (180°): alignment = -1.0 → negative reward
-        # Subtract constant to create pressure: must move >0.001m forward per step to break even
-        distance_reward = distance_moved * directional_alignment * 100.0 - 0.5
-        
-        # Velocity reward: encourages moving fast in the goal direction
         velocity_2d = np.array([base_lin_vel[0], base_lin_vel[1]])
         speed = np.linalg.norm(velocity_2d)
         
-        if speed > 1e-6:
-            velocity_direction = velocity_2d / speed
-            velocity_alignment = np.dot(velocity_direction, goal_direction)
-        else:
-            velocity_alignment = 0.0
+        # Reward computation based on type
+        if self.reward_type == "goal_directed":
+            # Goal-directed version: reward for approaching goal
+            to_goal = self.goal_position - current_pos_2d
+            distance_to_goal = np.linalg.norm(to_goal)
+            prev_distance_to_goal = np.linalg.norm(self.goal_position - prev_pos_2d)
+            
+            # Primary reward: getting closer to goal
+            distance_delta = prev_distance_to_goal - distance_to_goal
+            movement_reward = distance_delta * 1000.0
+            
+            # Direction to goal (normalized)
+            if distance_to_goal > 1e-6:
+                goal_direction = to_goal / distance_to_goal
+            else:
+                goal_direction = np.array([1.0, 0.0])
+            
+            # Velocity toward goal
+            if speed > 1e-6:
+                velocity_direction = velocity_2d / speed
+                velocity_alignment = np.dot(velocity_direction, goal_direction)
+            else:
+                velocity_alignment = 0.0
+            
+            velocity_reward = speed * velocity_alignment * 5.0
+            
+            # Bonus for reaching goal
+            goal_reached_bonus = 0.0
+            if distance_to_goal < self.goal_threshold:
+                goal_reached_bonus = 100.0
+            
+        else:  # forward_motion
+            # Forward motion version: reward for moving forward (positive X direction)
+            forward_direction = np.array([1.0, 0.0])
+            
+            # Primary reward: distance moved in forward direction
+            if distance_moved > 1e-6:
+                movement_direction = displacement / distance_moved
+                directional_alignment = np.dot(movement_direction, forward_direction)
+            else:
+                directional_alignment = 0.0
+            
+            movement_reward = distance_moved * directional_alignment * 1000.0
+            
+            # Velocity in forward direction
+            if speed > 1e-6:
+                velocity_direction = velocity_2d / speed
+                velocity_alignment = np.dot(velocity_direction, forward_direction)
+            else:
+                velocity_alignment = 0.0
+            
+            velocity_reward = speed * velocity_alignment * 10.0
+            
+            # No goal bonus for forward motion version
+            goal_reached_bonus = 0.0
         
-        # Reward fast forward movement
-        velocity_reward = speed * velocity_alignment * 5.0
-        
-        # Stability penalty (staying upright)
+        # Common penalties (same for both versions)
         euler = p.getEulerFromQuaternion(base_orn)
         roll, pitch, yaw = euler
-        stability_penalty = -1.0 * (abs(roll) + abs(pitch))
+        stability_penalty = -5.0 * (roll**2 + pitch**2)
         
-        # Energy efficiency penalty (smooth, efficient movements)
         joint_states = p.getJointStates(self.robot_id, self.joint_indices, physicsClientId=self.physics_client)
         joint_velocities = np.array([state[1] for state in joint_states])
-        energy_penalty = -0.0005 * np.sum(np.square(joint_velocities))
+        energy_penalty = -0.0001 * np.sum(np.square(joint_velocities))
+        
+        target_height = 0.12
+        height_error = abs(base_pos[2] - target_height)
+        height_reward = -2.0 * height_error
+        height_reward = -2.0 * height_error  # Reduced from -10.0
+        
+        # Contact quality penalty: penalize improper foot contacts
+        contact_quality_penalty = 0.0
+        non_foot_contact_penalty = 0.0
+        
+        contact_points = p.getContactPoints(bodyA=self.robot_id, bodyB=self.plane_id, 
+                                           physicsClientId=self.physics_client)
+        
+        for contact in contact_points:
+            link_index = contact[3]  # Link index on robot
+            contact_position = np.array(contact[5])  # Position on body A (robot)
+            
+            # Penalize non-foot contacts (body parts other than leg tips) - reduced penalty
+            if link_index in self.non_foot_link_indices:
+                non_foot_contact_penalty -= 1.0  # Reduced from -5.0
+            
+            # For foot contacts, check if contact is at the tip (low Z) or on the side (high Z)
+            elif link_index in self.foot_link_indices:
+                # Get link state to find the link's frame position
+                link_state = p.getLinkState(self.robot_id, link_index, physicsClientId=self.physics_client)
+                link_world_pos = np.array(link_state[0])  # World position of link frame
+                link_world_orn = link_state[1]  # World orientation
+                
+                # Contact position in world frame
+                contact_z = contact_position[2]
+                
+                # The foot tip should have very low Z (close to 0 on ground plane)
+                # If Z is higher, the robot is using the side/upper part of the leg link
+                if contact_z > 0.02:  # More than 2cm above ground
+                    # Penalty for using side of foot instead of tip - reduced penalty
+                    contact_quality_penalty -= 0.5  # Reduced from -3.0
         
         # Total reward
-        reward = distance_reward + velocity_reward + stability_penalty + energy_penalty
+        reward = (movement_reward + velocity_reward + goal_reached_bonus + 
+                 stability_penalty + energy_penalty + height_reward + 
+                 non_foot_contact_penalty + contact_quality_penalty)
         
         # Update previous position
         self.prev_base_pos = np.array(base_pos)
         
         self.reward_components = {
-            "reward/distance": distance_reward,
+            "reward/movement": movement_reward,
             "reward/velocity": velocity_reward,
+            "reward/goal_bonus": goal_reached_bonus,
             "reward/stability_penalty": stability_penalty,
             "reward/energy_penalty": energy_penalty,
+            "reward/height": height_reward,
+            "reward/non_foot_contact_penalty": non_foot_contact_penalty,
+            "reward/contact_quality_penalty": contact_quality_penalty,
             "reward/total": reward,
         }
         
@@ -419,36 +517,31 @@ class HexapodEnv(gym.Env):
         to_goal = self.goal_position - np.array([base_pos[0], base_pos[1]])
         distance_to_goal = np.linalg.norm(to_goal)
         
-        return {
+        info = {
             "x_position": base_pos[0],
             "y_position": base_pos[1],
             "z_position": base_pos[2],
             "x_velocity": base_lin_vel[0],
             "distance_to_goal": distance_to_goal,
         }
+        
+        # Add reward components for logging
+        info.update(self.reward_components)
+        
+        return info
     
     def render(self):
         """Render the environment."""
         if self.render_mode == "rgb_array":
             # Get robot position
             base_pos, _ = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.physics_client)
-            robot_2d = np.array([base_pos[0], base_pos[1]])
             
             # Calculate midpoint between robot and goal for camera framing
             mid_x = (base_pos[0] + self.goal_position[0]) / 2
             mid_y = (base_pos[1] + self.goal_position[1]) / 2
             
-            # Only move camera if robot exits the dead zone from the midpoint
-            camera_to_robot = robot_2d - np.array([mid_x, mid_y])
-            distance_from_camera_center = np.linalg.norm(camera_to_robot)
-            
-            if distance_from_camera_center > self.camera_deadzone_radius:
-                # Robot has moved too far, update camera target to keep both robot and goal visible
-                # Recalculate midpoint as camera target
-                self.camera_target[:2] = np.array([mid_x, mid_y])
-            else:
-                # Keep current camera target for stability
-                pass
+            # Update camera target to keep both robot and goal visible
+            self.camera_target[:2] = np.array([mid_x, mid_y])
             
             # Calculate distance between robot and goal to determine camera zoom
             to_goal = self.goal_position - np.array([base_pos[0], base_pos[1]])
