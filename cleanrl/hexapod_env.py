@@ -25,7 +25,7 @@ class HexapodEnv(gym.Env):
     
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
     
-    def __init__(self, render_mode=None, max_steps=1000, control_frequency=None, reward_type="forward_motion"):
+    def __init__(self, render_mode=None, max_steps=1000, control_frequency=None, reward_type="goal_directed"):
         super().__init__()
         
         self.render_mode = render_mode

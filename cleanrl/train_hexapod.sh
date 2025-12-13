@@ -3,9 +3,10 @@
 
 python cleanrl/ppo_continuous_action.py \
     --env-id Hexapod-v0 \
-    --total-timesteps 2000000 \
+    --total-timesteps 1500000 \
     --num-envs 8 \
     --save-model \
     --seed 564 \
-    --exp-name forward_motion_hexapod \
+    --learning-rate 1e-3 \
+    --exp-name lr1e-3 \
     # --capture-video
