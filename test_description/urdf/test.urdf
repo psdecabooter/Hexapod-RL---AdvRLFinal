@@ -787,7 +787,7 @@
   <child link="hip_servo_1"/>
 </joint>
 
-<joint name="Revolute 4" type="revolute">
+<joint name="leg1_hip" type="revolute">
   <origin xyz="0.0125 0.0075 -0.005667" rpy="0 0 0"/>
   <parent link="hip_servo_1"/>
   <child link="hip_link_1"/>
@@ -795,7 +795,7 @@
   <limit upper="0.785398" lower="-0.785398" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 5" type="revolute">
+<joint name="leg1_knee" type="revolute">
   <origin xyz="0.037 0.0265 0.0265" rpy="0 0 0"/>
   <parent link="hip_link_1"/>
   <child link="knee_servo_1"/>
@@ -815,7 +815,7 @@
   <child link="ankle_servo_1"/>
 </joint>
 
-<joint name="Revolute 8" type="revolute">
+<joint name="leg1_ankle" type="revolute">
   <origin xyz="0.053737 0.141473 -0.019878" rpy="0 0 0"/>
   <parent link="ankle_servo_1"/>
   <child link="leg_link_1"/>
@@ -823,7 +823,7 @@
   <limit upper="3.141593" lower="-1.047198" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 9" type="revolute">
+<joint name="leg2_hip" type="revolute">
   <origin xyz="0.012745 -0.007075 -0.005667" rpy="0 0 0"/>
   <parent link="hip_servo_2"/>
   <child link="hip_link_2"/>
@@ -831,7 +831,7 @@
   <limit upper="0.785398" lower="-0.785398" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 10" type="revolute">
+<joint name="leg2_knee" type="revolute">
   <origin xyz="0.04145 -0.018793 0.0265" rpy="0 0 0"/>
   <parent link="hip_link_2"/>
   <child link="knee_servo_2"/>
@@ -851,7 +851,7 @@
   <child link="ankle_servo_2"/>
 </joint>
 
-<joint name="Revolute 13" type="revolute">
+<joint name="leg2_ankle" type="revolute">
   <origin xyz="0.061841 -0.026346 -0.155215" rpy="0 0 0"/>
   <parent link="ankle_servo_2"/>
   <child link="leg_link_2"/>
@@ -865,7 +865,7 @@
   <child link="hip_servo_2"/>
 </joint>
 
-<joint name="Revolute 15" type="revolute">
+<joint name="leg3_hip" type="revolute">
   <origin xyz="0.000245 -0.014575 -0.005667" rpy="0 0 0"/>
   <parent link="hip_servo_3"/>
   <child link="hip_link_3"/>
@@ -873,7 +873,7 @@
   <limit upper="0.785398" lower="-0.785398" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 16" type="revolute">
+<joint name="leg3_knee" type="revolute">
   <origin xyz="0.00445 -0.045293 0.0265" rpy="0 0 0"/>
   <parent link="hip_link_3"/>
   <child link="knee_servo_3"/>
@@ -893,7 +893,7 @@
   <child link="ankle_servo_3"/>
 </joint>
 
-<joint name="Revolute 19" type="revolute">
+<joint name="leg3_ankle" type="revolute">
   <origin xyz="-0.137172 0.017146 -0.135337" rpy="0 0 0"/>
   <parent link="ankle_servo_3"/>
   <child link="leg_link_3"/>
@@ -907,7 +907,7 @@
   <child link="hip_servo_3"/>
 </joint>
 
-<joint name="Revolute 21" type="revolute">
+<joint name="leg4_hip" type="revolute">
   <origin xyz="-0.000245 0.014575 -0.005667" rpy="0 0 0"/>
   <parent link="hip_servo_4"/>
   <child link="hip_link_4"/>
@@ -915,7 +915,7 @@
   <limit upper="0.785398" lower="-0.785398" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 22" type="revolute">
+<joint name="leg4_knee" type="revolute">
   <origin xyz="-0.00445 0.045293 0.0265" rpy="0 0 0"/>
   <parent link="hip_link_4"/>
   <child link="knee_servo_4"/>
@@ -935,7 +935,7 @@
   <child link="ankle_servo_4"/>
 </joint>
 
-<joint name="Revolute 25" type="revolute">
+<joint name="leg4_ankle" type="revolute">
   <origin xyz="-0.03792 0.083943 0.135337" rpy="0 0 0"/>
   <parent link="ankle_servo_4"/>
   <child link="leg_link_4"/>
@@ -949,7 +949,7 @@
   <child link="hip_servo_4"/>
 </joint>
 
-<joint name="Revolute 27" type="revolute">
+<joint name="leg5_hip" type="revolute">
   <origin xyz="-0.012745 0.007075 -0.005667" rpy="0 0 0"/>
   <parent link="hip_servo_5"/>
   <child link="hip_link_5"/>
@@ -957,7 +957,7 @@
   <limit upper="0.785398" lower="-0.785398" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 28" type="revolute">
+<joint name="leg5_knee" type="revolute">
   <origin xyz="-0.04145 0.018793 0.0265" rpy="0 0 0"/>
   <parent link="hip_link_5"/>
   <child link="knee_servo_5"/>
@@ -977,7 +977,7 @@
   <child link="ankle_servo_5"/>
 </joint>
 
-<joint name="Revolute 31" type="revolute">
+<joint name="leg5_ankle" type="revolute">
   <origin xyz="0.053619 0.093006 0.155214" rpy="0 0 0"/>
   <parent link="ankle_servo_5"/>
   <child link="leg_link_5"/>
@@ -991,7 +991,7 @@
   <child link="hip_servo_5"/>
 </joint>
 
-<joint name="Revolute 33" type="revolute">
+<joint name="leg6_hip" type="revolute">
   <origin xyz="-0.0125 -0.0075 -0.005667" rpy="0 0 0"/>
   <parent link="hip_servo_6"/>
   <child link="hip_link_6"/>
@@ -999,7 +999,7 @@
   <limit upper="0.785398" lower="-0.785398" effort="100" velocity="100"/>
 </joint>
 
-<joint name="Revolute 34" type="revolute">
+<joint name="leg6_knee" type="revolute">
   <origin xyz="-0.037 -0.0265 0.0265" rpy="0 0 0"/>
   <parent link="hip_link_6"/>
   <child link="knee_servo_6"/>
@@ -1019,7 +1019,7 @@
   <child link="ankle_servo_6"/>
 </joint>
 
-<joint name="Revolute 37" type="revolute">
+<joint name="leg6_ankle" type="revolute">
   <origin xyz="-0.053737 0.194027 0.019877" rpy="0 0 0"/>
   <parent link="ankle_servo_6"/>
   <child link="leg_link_6"/>
