@@ -2,6 +2,9 @@
 
 This project implements a custom PyBullet-based hexapod locomotion environment and trains reinforcement learning agents using Proximal Policy Optimization (PPO) to learn goal-directed walking without hand-coded gaits.
 
+## Read our Final Report
+[CS839_final_report.pdf](https://github.com/psdecabooter/AdvRLFinal/blob/master/CS839_final_report.pdf)
+
 ## Prerequisites
 
 ### System Requirements
